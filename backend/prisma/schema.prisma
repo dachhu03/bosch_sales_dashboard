@@ -1,0 +1,56 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+}
+
+model TotalSolutions {
+  id                     Int       @id @default(autoincrement())
+  application            String
+  category               String    // 'hardware', 'software', 'service'
+  productName            String
+  productImage           String?
+  make                   String?
+  model                  String?
+  specification          String?
+  uom                    String
+  buyingPrice            Float     @default(0.0)
+  vendor                 String?
+  quotationReceivedMonth String?
+  leadTime               String?
+  remarks                String?
+  listPrice              Float     @default(0.0)
+  discount               Int       @default(0)
+  salesPrice             Float     @default(0.0)
+  salesMargin            Int       @default(0)
+  buyingPriceUpdatedAt   DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+model BOQ {
+  id              Int      @id @default(autoincrement())
+  projectName     String
+  projectLocation String?
+  quotationNumber String?
+  approach        String   @default("si")
+  budget          String   @default("standard")
+  solutionTitle   String?
+  hardware        Json     @default("[]")
+  software        Json     @default("[]")
+  services        Json     @default("[]")
+  amc             Json     @default("{}")
+  totals          Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

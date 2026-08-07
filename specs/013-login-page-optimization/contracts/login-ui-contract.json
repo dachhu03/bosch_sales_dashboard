@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LoginUIContract",
+  "description": "Component contract and state interface for the optimized Login view component",
+  "type": "object",
+  "properties": {
+    "authContextConsumer": {
+      "type": "object",
+      "properties": {
+        "login": {
+          "type": "string",
+          "description": "Async function taking (username, password) returning Promise<{ success: boolean, message?: string }>"
+        }
+      },
+      "required": ["login"]
+    },
+    "viewState": {
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "error": { "type": "string" },
+        "submitting": { "type": "boolean" }
+      },
+      "required": ["username", "password", "error", "submitting"]
+    },
+    "themeClassNames": {
+      "type": "object",
+      "properties": {
+        "cardContainer": { "type": "string", "example": "light-blue-glass-panel" },
+        "primaryButton": { "type": "string", "example": "bg-gradient-to-r from-sky-600 via-sky-400 to-sky-600" }
+      }
+    }
+  }
+}
