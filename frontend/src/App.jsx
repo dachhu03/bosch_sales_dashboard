@@ -17,9 +17,10 @@ import ThemeToggle from './components/ThemeToggle.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import { ThemeProvider } from './context/ThemeContext.jsx';
 import { isSuperAdmin, isViewer, hasRole, hasPermission } from './utils/rbac.js';
+import { API_BASE_URL } from './utils/api.js';
 
 // Axios global defaults & Interceptors
-axios.defaults.baseURL = 'http://localhost:5000/api';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.withCredentials = true;
 
 // Automatically attach Bearer token to all outgoing REST API requests

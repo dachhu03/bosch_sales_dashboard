@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EnvironmentConfigContract",
+  "description": "Schema for multi-environment frontend and backend deployment options",
+  "type": "object",
+  "properties": {
+    "frontend": {
+      "type": "object",
+      "properties": {
+        "VITE_API_URL": {
+          "type": "string",
+          "example": "https://bosch-sales-dashboard.onrender.com/api"
+        }
+      },
+      "required": ["VITE_API_URL"]
+    },
+    "backend": {
+      "type": "object",
+      "properties": {
+        "FRONTEND_URL": {
+          "type": "string",
+          "example": "https://bosch-sales-dashboard.vercel.app"
+        },
+        "NODE_ENV": {
+          "type": "string",
+          "enum": ["development", "production", "test"]
+        }
+      },
+      "required": ["FRONTEND_URL", "NODE_ENV"]
+    }
+  }
+}

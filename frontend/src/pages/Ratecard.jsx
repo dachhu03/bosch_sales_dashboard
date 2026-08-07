@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { getMediaUrl } from '../utils/api.js';
 
 export default function Ratecard() {
   const { user, isViewer, hasPermission } = useAuth();
@@ -599,7 +600,7 @@ export default function Ratecard() {
                         className="w-10 h-10 border border-dashed border-slate-300 hover:border-bosch-blue rounded-lg overflow-hidden flex items-center justify-center cursor-pointer bg-slate-50 mx-auto transition-colors"
                       >
                         {p.productImage ? (
-                          <img src={`http://localhost:5000${p.productImage}`} alt={p.productName} className="object-cover w-full h-full" />
+                          <img src={getMediaUrl(p.productImage)} alt={p.productName} className="object-cover w-full h-full" />
                         ) : (
                           <ImagePlus className="w-4 h-4 text-slate-400" />
                         )}
