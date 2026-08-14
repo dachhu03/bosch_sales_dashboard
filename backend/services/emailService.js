@@ -5,11 +5,11 @@ dotenv.config();
 
 function getSmtpConfig() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '587');
-  const secure = process.env.SMTP_SECURE === 'true';
+  const port = parseInt(process.env.SMTP_PORT || '465');
+  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
   const user = process.env.SMTP_USER || 'darshhgowda03@gmail.com';
   const pass = process.env.SMTP_PASSWORD ? String(process.env.SMTP_PASSWORD).replace(/"/g, '') : '';
-  const from = 'Bosch Sales Dashboard <darshhgowda03@gmail.com>';
+  const from = process.env.EMAIL_FROM || 'Bosch Sales Dashboard <darshhgowda03@gmail.com>';
 
   return { host, port, secure, user, pass, from };
 }
@@ -19,14 +19,18 @@ let transporter = null;
 export function getTransporter() {
   if (!transporter) {
     const config = getSmtpConfig();
+    const isGmail = config.host?.includes('gmail') || config.user?.includes('gmail');
+
     transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure, // false for 587 STARTTLS
+      ...(isGmail ? { service: 'gmail' } : { host: config.host, port: config.port, secure: config.secure }),
       auth: {
         user: config.user,
         pass: config.pass
       },
+      family: 4, // Force IPv4 to prevent ENETUNREACH IPv6 connection failure on cloud platforms
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
       tls: {
         rejectUnauthorized: false
       }
@@ -166,16 +170,83 @@ ${appName} System Notification
 }
 
 /**
- * Transports email via Nodemailer Gmail SMTP
+ * Dispatches email using Resend HTTP API (Primary), Brevo HTTP API (Secondary), or IPv4 Nodemailer (Fallback)
  */
 export async function sendEmail({ to, subject, html, text }) {
+  // 1. Resend HTTP API Transport (HTTPS port 443 - Never blocked by Render)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resendFrom = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'Bosch Sales Dashboard <onboarding@resend.dev>';
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: resendFrom,
+          to: Array.isArray(to) ? to : [to],
+          subject,
+          html,
+          text
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(`Resend API error (${res.status}): ${JSON.stringify(data)}`);
+      }
+
+      console.log(`[EmailService/Resend] Email delivered successfully to ${to} (Message ID: ${data.id})`);
+      return { success: true, messageId: data.id, provider: 'resend' };
+    } catch (apiErr) {
+      console.error(`[EmailService/Resend] Error sending via Resend API:`, apiErr.message);
+      throw apiErr;
+    }
+  }
+
+  // 2. Brevo HTTP API Transport (HTTPS port 443 - Never blocked by Render)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const senderEmail = process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER || 'darshhgowda03@gmail.com';
+      const senderName = process.env.BREVO_SENDER_NAME || 'Bosch Sales Dashboard';
+
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY.trim(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: senderName, email: senderEmail },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+          textContent: text
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(`Brevo API error (${res.status}): ${JSON.stringify(data)}`);
+      }
+
+      console.log(`[EmailService/Brevo] Email delivered successfully to ${to} (Message ID: ${data.messageId})`);
+      return { success: true, messageId: data.messageId, provider: 'brevo' };
+    } catch (brevoErr) {
+      console.error(`[EmailService/Brevo] Error sending via Brevo API:`, brevoErr.message);
+      throw brevoErr;
+    }
+  }
+
+  // 3. Fallback: Direct Nodemailer Transport (with IPv4 enforcement & service preset)
   const config = getSmtpConfig();
   const mailTransporter = getTransporter();
 
   const mailOptions = {
-    from: '"Bosch Sales Dashboard" <darshhgowda03@gmail.com>',
+    from: config.from || '"Bosch Sales Dashboard" <darshhgowda03@gmail.com>',
     to,
-    replyTo: 'darshhgowda03@gmail.com',
+    replyTo: config.user || 'darshhgowda03@gmail.com',
     subject,
     html,
     text,
@@ -188,10 +259,10 @@ export async function sendEmail({ to, subject, html, text }) {
 
   try {
     const info = await mailTransporter.sendMail(mailOptions);
-    console.log(`[EmailService] Email sent successfully to ${to} (Message ID: ${info.messageId})`);
-    return { success: true, messageId: info.messageId };
+    console.log(`[EmailService/SMTP] Email sent successfully to ${to} (Message ID: ${info.messageId})`);
+    return { success: true, messageId: info.messageId, provider: 'smtp' };
   } catch (error) {
-    console.error(`[EmailService] Error dispatching email to ${to}:`, error);
+    console.error(`[EmailService/SMTP] Error dispatching email to ${to}:`, error);
     throw error;
   }
 }
