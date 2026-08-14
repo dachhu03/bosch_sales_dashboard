@@ -279,4 +279,153 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
 
+// GET /api/admin/notifications - List notification logs and pending review BOQs
+router.get('/notifications', async (req, res) => {
+  try {
+    const { data: logs, error: logsErr } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    const { data: boqs, error: boqsErr } = await supabase
+      .from('exapp_boq')
+      .select('id, project_name, project_location, quotation_number, solution_title, totals, created_at')
+      .order('created_at', { ascending: false });
+
+    if (logsErr && !logs) {
+      console.warn('Fetch notifications warning:', logsErr.message);
+    }
+
+    const formattedNotifications = (logs || []).map(n => ({
+      id: n.id,
+      boqId: n.boq_id,
+      eventId: n.event_id,
+      recipient: n.recipient,
+      notificationType: n.notification_type,
+      status: n.status,
+      sentAt: n.sent_at,
+      createdAt: n.created_at,
+      errorMessage: n.error_message
+    }));
+
+    const formattedBoqs = (boqs || []).map(b => {
+      let totals = {};
+      try {
+        totals = typeof b.totals === 'string' ? JSON.parse(b.totals) : (b.totals || {});
+      } catch (e) {
+        totals = {};
+      }
+      return {
+        id: b.id,
+        projectName: b.project_name,
+        projectLocation: b.project_location,
+        quotationNumber: b.quotation_number,
+        solutionTitle: b.solution_title,
+        preparedBy: totals.preparedBy || 'Sales Member',
+        salesTotal: parseFloat(totals.grandTotalSales || totals.grand_sales_total) || 0,
+        reviewStatus: totals.reviewStatus || 'DRAFT',
+        reviewRemarks: totals.reviewRemarks || '',
+        createdAt: b.created_at,
+        updatedAt: totals.updatedAt || b.created_at
+      };
+    });
+
+    const pendingCount = formattedBoqs.filter(b => b.reviewStatus === 'PENDING_REVIEW' || b.reviewStatus === 'IN_REVIEW').length;
+
+    return res.json({
+      status: 'success',
+      data: {
+        notifications: formattedNotifications,
+        boqs: formattedBoqs,
+        pendingCount
+      }
+    });
+  } catch (err) {
+    console.error('Fetch admin notifications exception:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to retrieve notification logs.' });
+  }
+});
+
+// PATCH /api/admin/boq/:id/review - Update internal review status & review remarks (Super Admin only)
+router.patch('/boq/:id/review', async (req, res) => {
+  const { id } = req.params;
+  const { review_status, reviewStatus, review_remarks, reviewRemarks } = req.body;
+
+  const targetStatus = review_status || reviewStatus;
+  const targetRemarks = review_remarks !== undefined ? review_remarks : reviewRemarks;
+
+  const validStatuses = ['DRAFT', 'PENDING_REVIEW', 'IN_REVIEW', 'APPROVED', 'REJECTED'];
+  if (targetStatus && !validStatuses.includes(targetStatus.toUpperCase())) {
+    return res.status(400).json({
+      status: 'error',
+      message: `Invalid review status. Must be one of: ${validStatuses.join(', ')}`
+    });
+  }
+
+  try {
+    const { data: rows, error: fetchErr } = await supabase
+      .from('exapp_boq')
+      .select('totals')
+      .eq('id', parseInt(id));
+
+    if (fetchErr || !rows || !rows.length) {
+      return res.status(404).json({ status: 'error', message: 'BOQ solution quote not found.' });
+    }
+
+    let currentTotals = {};
+    try {
+      currentTotals = typeof rows[0].totals === 'string' ? JSON.parse(rows[0].totals) : (rows[0].totals || {});
+    } catch (e) {
+      currentTotals = {};
+    }
+
+    const normalizedStatus = targetStatus ? targetStatus.toUpperCase() : (currentTotals.reviewStatus || 'PENDING_REVIEW');
+    const finalRemarks = targetRemarks !== undefined ? String(targetRemarks).trim() : (currentTotals.reviewRemarks || '');
+
+    // Synchronize Report status automatically from Super Admin Internal Review Status
+    let reportStatus = 'In Review';
+    if (normalizedStatus === 'APPROVED') reportStatus = 'Closed';
+    else if (normalizedStatus === 'REJECTED') reportStatus = 'Rejected';
+    else if (normalizedStatus === 'IN_REVIEW' || normalizedStatus === 'PENDING_REVIEW') reportStatus = 'In Review';
+
+    const updatedTotals = {
+      ...currentTotals,
+      reviewStatus: normalizedStatus,
+      reviewRemarks: finalRemarks,
+      remarks: finalRemarks,
+      notes: finalRemarks,
+      approvalStatus: reportStatus,
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatePayload = {
+      totals: updatedTotals
+    };
+
+    const { error: updateErr } = await supabase
+      .from('exapp_boq')
+      .update(updatePayload)
+      .eq('id', parseInt(id));
+
+    if (updateErr) {
+      console.error('Update BOQ review error:', updateErr);
+      return res.status(500).json({ status: 'error', message: 'Failed to update BOQ review status.' });
+    }
+
+    return res.json({
+      status: 'success',
+      message: 'BOQ review status updated successfully.',
+      data: {
+        id: parseInt(id),
+        reviewStatus: normalizedStatus,
+        reviewRemarks: finalRemarks
+      }
+    });
+  } catch (err) {
+    console.error('Update BOQ review exception:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to update BOQ review status.' });
+  }
+});
+
 export default router;

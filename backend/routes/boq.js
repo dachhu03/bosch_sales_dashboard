@@ -2,6 +2,7 @@ import { Router } from 'express';
 import supabase from '../utils/supabase.js';
 import { verifyToken } from './auth.js';
 import { requirePermission, requireRole } from '../middleware/rbac.js';
+import { sendBoqSaveNotification } from '../services/notificationService.js';
 
 const router = Router();
 
@@ -30,12 +31,15 @@ function mapRowToCamel(row) {
     solutionTitle: row.solution_title,
     preparedBy: row.prepared_by || row.preparedby || totals.preparedBy || 'Sales Member',
     approvalStatus: totals.approvalStatus || row.approval_status || 'Pending',
+    reviewStatus: totals.reviewStatus || 'PENDING_REVIEW',
+    reviewRemarks: totals.reviewRemarks || '',
     hardware: parseJsonSafe(row.hardware),
     software: parseJsonSafe(row.software),
     services: parseJsonSafe(row.services),
     amc: parseJsonSafe(row.amc),
     totals: totals,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    updatedAt: totals.updatedAt || row.created_at
   };
 }
 
@@ -113,6 +117,12 @@ router.get('/:id', verifyToken, requirePermission('boq:read'), async (req, res) 
 router.post('/save', verifyToken, requirePermission('boq:write'), async (req, res) => {
   const {
     id,
+    event_id,
+    eventId,
+    send_notification,
+    sendNotification,
+    submit_for_review,
+    submitForReview,
     project_name,
     project_location,
     quotation_number,
@@ -126,16 +136,57 @@ router.post('/save', verifyToken, requirePermission('boq:write'), async (req, re
     totals
   } = req.body;
 
+  const targetEventId = event_id || eventId;
+  const shouldNotify = Boolean(send_notification || sendNotification || submit_for_review || submitForReview);
+
   if (!project_name) {
     return res.status(400).json({ status: 'error', message: 'Project name is required.' });
   }
 
   try {
     let savedBoq;
+    const isNew = !id;
+
+    // Determine reviewStatus:
+    // If explicitly submitted for review -> 'PENDING_REVIEW'
+    // Else if caller provided totals.reviewStatus -> use it
+    // Else if updating existing quote -> preserve existing reviewStatus or default to 'DRAFT'
+    // Else if new quote -> 'DRAFT'
+    let targetReviewStatus = (totals && totals.reviewStatus);
+    if (shouldNotify) {
+      targetReviewStatus = 'PENDING_REVIEW';
+    } else if (!targetReviewStatus) {
+      targetReviewStatus = isNew ? 'DRAFT' : undefined;
+    }
+
+    let existingRow = null;
+    if (id) {
+      // Check existing BOQ
+      const { data: items } = await supabase
+        .from('exapp_boq')
+        .select('*')
+        .eq('id', parseInt(id));
+
+      existingRow = items && items[0];
+      if (!existingRow) {
+        return res.status(404).json({ status: 'error', message: 'BOQ quote not found for updates.' });
+      }
+
+      if (!targetReviewStatus) {
+        const existingTotals = parseJsonSafe(existingRow.totals) || {};
+        targetReviewStatus = existingTotals.reviewStatus || 'DRAFT';
+      }
+    } else {
+      if (!targetReviewStatus) {
+        targetReviewStatus = 'DRAFT';
+      }
+    }
 
     const mergedTotals = {
       ...(totals || {}),
-      preparedBy: req.user?.username || 'Sales Member'
+      preparedBy: req.user?.username || (totals && totals.preparedBy) || 'Sales Member',
+      reviewStatus: targetReviewStatus,
+      updatedAt: new Date().toISOString()
     };
 
     const boqData = mapDataToSnake({
@@ -155,17 +206,6 @@ router.post('/save', verifyToken, requirePermission('boq:write'), async (req, re
 
     if (id) {
       // Update existing BOQ
-      const { data: items } = await supabase
-        .from('exapp_boq')
-        .select('*')
-        .eq('id', parseInt(id));
-
-      const exists = items && items[0];
-      if (!exists) {
-        return res.status(404).json({ status: 'error', message: 'BOQ quote not found for updates.' });
-      }
-
-      // Avoid updating created_at on update
       delete boqData.created_at;
 
       const { data: updatedRows, error: updateErr } = await supabase
@@ -176,7 +216,7 @@ router.post('/save', verifyToken, requirePermission('boq:write'), async (req, re
 
       if (updateErr) {
         console.error('Update BOQ error:', updateErr);
-        return res.status(500).json({ status: 'error', message: 'Failed to update BOQ.' });
+        return res.status(500).json({ status: 'error', message: `Failed to update BOQ: ${updateErr.message}` });
       }
 
       savedBoq = mapRowToCamel(updatedRows[0]);
@@ -189,20 +229,103 @@ router.post('/save', verifyToken, requirePermission('boq:write'), async (req, re
 
       if (createErr) {
         console.error('Create BOQ error:', createErr);
-        return res.status(500).json({ status: 'error', message: 'Failed to create BOQ.' });
+        return res.status(500).json({ status: 'error', message: `Failed to create BOQ: ${createErr.message}` });
       }
 
       savedBoq = mapRowToCamel(createdRows[0]);
     }
 
+    // Trigger non-blocking Super Admin email notification ONLY if requested
+    if (shouldNotify) {
+      sendBoqSaveNotification({
+        boqId: savedBoq.id,
+        boqData: savedBoq,
+        isNew: isNew,
+        actorName: req.user?.username || 'Sales Member',
+        eventId: targetEventId
+      }).catch(notifErr => {
+        console.warn('[BOQ Route Warning] Non-blocking notification dispatch error:', notifErr?.message || notifErr);
+      });
+    }
+
     return res.json({
       status: 'success',
-      message: 'BOQ saved successfully.',
-      data: { id: savedBoq.id }
+      message: shouldNotify 
+        ? 'BOQ quotation saved and submitted for Super Admin review.' 
+        : 'BOQ quotation draft saved successfully.',
+      data: { 
+        id: savedBoq.id,
+        event_id: targetEventId || null,
+        reviewStatus: savedBoq.reviewStatus,
+        notificationSent: shouldNotify
+      }
     });
   } catch (error) {
     console.error('Save BOQ exception:', error);
     return res.status(500).json({ status: 'error', message: 'Failed to save BOQ quotation.' });
+  }
+});
+
+// POST /boq/:id/submit-review (Explicitly submit an existing BOQ for Super Admin review & trigger email)
+router.post('/:id/submit-review', verifyToken, requirePermission('boq:write'), async (req, res) => {
+  const { id } = req.params;
+  const { event_id, eventId } = req.body || {};
+  const targetEventId = event_id || eventId;
+
+  try {
+    const { data: rows, error: fetchErr } = await supabase
+      .from('exapp_boq')
+      .select('*')
+      .eq('id', parseInt(id));
+
+    const boq = rows && rows[0];
+    if (fetchErr || !boq) {
+      return res.status(404).json({ status: 'error', message: 'BOQ quote not found.' });
+    }
+
+    const currentTotals = parseJsonSafe(boq.totals) || {};
+    const updatedTotals = {
+      ...currentTotals,
+      reviewStatus: 'PENDING_REVIEW',
+      updatedAt: new Date().toISOString()
+    };
+
+    const { data: updatedRows, error: updateErr } = await supabase
+      .from('exapp_boq')
+      .update({ totals: updatedTotals })
+      .eq('id', parseInt(id))
+      .select();
+
+    if (updateErr) {
+      console.error('Submit BOQ review error:', updateErr);
+      return res.status(500).json({ status: 'error', message: 'Failed to update BOQ review status.' });
+    }
+
+    const updatedBoq = mapRowToCamel(updatedRows[0]);
+
+    // Dispatch notification
+    sendBoqSaveNotification({
+      boqId: updatedBoq.id,
+      boqData: updatedBoq,
+      isNew: false,
+      actorName: req.user?.username || 'Sales Member',
+      eventId: targetEventId
+    }).catch(notifErr => {
+      console.warn('[BOQ Route Warning] Notification dispatch error:', notifErr?.message || notifErr);
+    });
+
+    return res.json({
+      status: 'success',
+      message: 'BOQ quotation successfully submitted for Super Admin review.',
+      data: {
+        id: updatedBoq.id,
+        reviewStatus: 'PENDING_REVIEW',
+        notificationSent: true
+      }
+    });
+  } catch (error) {
+    console.error('Submit review exception:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to submit BOQ for review.' });
   }
 });
 

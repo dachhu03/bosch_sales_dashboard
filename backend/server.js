@@ -9,6 +9,7 @@ import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import boqRouter from './routes/boq.js';
 import adminRouter from './routes/admin.js';
+import reportsRouter from './routes/reports.js';
 
 dotenv.config();
 
@@ -57,6 +58,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/boq', boqRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/reports', reportsRouter);
 
 // Global Error Handler
 app.use((err, req, res, next) => {

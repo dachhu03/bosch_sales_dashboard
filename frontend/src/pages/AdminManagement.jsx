@@ -16,10 +16,21 @@ import {
   Lock, 
   AlertCircle,
   Tag,
-  Trash2
+  Trash2,
+  Bell,
+  FileText,
+  Clock,
+  MessageSquare,
+  Send,
+  RefreshCw,
+  AlertTriangle,
+  ChevronDown
 } from 'lucide-react';
 
 export default function AdminManagement() {
+  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'notifications'
+  
+  // User Management State
   const [users, setUsers] = useState([]);
   const [rolesMap, setRolesMap] = useState({});
   const [permissionCatalog, setPermissionCatalog] = useState([]);
@@ -27,6 +38,15 @@ export default function AdminManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Notifications & Review Panel State
+  const [notifications, setNotifications] = useState([]);
+  const [boqs, setBoqs] = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [reviewModalBoq, setReviewModalBoq] = useState(null);
+  const [reviewForm, setReviewForm] = useState({ review_status: 'APPROVED', review_remarks: '' });
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const showSuccess = (msg) => {
     setSuccessMsg(msg);
@@ -42,7 +62,7 @@ export default function AdminManagement() {
     }, 5000);
   };
 
-  // Modal State
+  // User Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('create'); // 'create' | 'edit'
   const [selectedUser, setSelectedUser] = useState(null);
@@ -50,7 +70,7 @@ export default function AdminManagement() {
   const [userToDelete, setUserToDelete] = useState(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
 
-  // Form State
+  // Form State for User
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -61,6 +81,7 @@ export default function AdminManagement() {
 
   useEffect(() => {
     fetchData();
+    fetchNotifications();
   }, []);
 
   const fetchData = async () => {
@@ -84,6 +105,22 @@ export default function AdminManagement() {
       setErrorMsg(err.response?.data?.message || 'Failed to load user administration data.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchNotifications = async () => {
+    setLoadingNotifications(true);
+    try {
+      const res = await axios.get('/admin/notifications');
+      if (res.data.status === 'success') {
+        setNotifications(res.data.data.notifications || []);
+        setBoqs(res.data.data.boqs || []);
+        setPendingCount(res.data.data.pendingCount || 0);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+    } finally {
+      setLoadingNotifications(false);
     }
   };
 
@@ -203,6 +240,36 @@ export default function AdminManagement() {
     }
   };
 
+  // Open BOQ Review Modal
+  const handleOpenReviewModal = (boq) => {
+    setReviewModalBoq(boq);
+    setReviewForm({
+      review_status: boq.reviewStatus || 'APPROVED',
+      review_remarks: boq.reviewRemarks || ''
+    });
+  };
+
+  // Submit BOQ Review Update
+  const handleSubmitReview = async (e) => {
+    e.preventDefault();
+    if (!reviewModalBoq) return;
+
+    setSubmittingReview(true);
+    try {
+      const res = await axios.patch(`/admin/boq/${reviewModalBoq.id}/review`, reviewForm);
+      if (res.data.status === 'success') {
+        showSuccess(`BOQ #${reviewModalBoq.id} review status updated to "${res.data.data.reviewStatus}".`);
+        setReviewModalBoq(null);
+        fetchNotifications();
+      }
+    } catch (err) {
+      console.error('Submit BOQ review error:', err);
+      showError(err.response?.data?.message || 'Failed to update BOQ review status.');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
   const filteredUsers = users.filter(u => 
     (u.username || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -234,6 +301,21 @@ export default function AdminManagement() {
     }
   };
 
+  const getReviewBadgeStyle = (status) => {
+    switch (status) {
+      case 'APPROVED':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-300';
+      case 'REJECTED':
+        return 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/70 dark:text-rose-300';
+      case 'IN_REVIEW':
+        return 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/70 dark:text-blue-300';
+      case 'DRAFT':
+        return 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300';
+      default: // PENDING_REVIEW
+        return 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:text-amber-300';
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       {/* Header Banner */}
@@ -243,21 +325,58 @@ export default function AdminManagement() {
             <ShieldCheck className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Admin & RBAC Control Center</h1>
-            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">Manage system access roles, user provisioning, and fine-grained security permissions.</p>
+            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Super Admin & RBAC Control Center</h1>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">Manage system access roles, user provisioning, and BOQ save review notifications.</p>
           </div>
         </div>
 
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleOpenCreateModal}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue text-white font-bold text-xs rounded-xl shadow-md shadow-bosch-blue/20 hover:shadow-lg hover:shadow-bosch-blue/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Provision New User</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
         <button
-          onClick={handleOpenCreateModal}
-          className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue text-white font-bold text-xs rounded-xl shadow-md shadow-bosch-blue/20 hover:shadow-lg hover:shadow-bosch-blue/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          onClick={() => setActiveTab('users')}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+            activeTab === 'users'
+              ? 'bg-bosch-blue text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
         >
-          <UserPlus className="w-4 h-4" />
-          <span>Provision New User</span>
+          <Users className="w-4 h-4" />
+          <span>User Administration & Security</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('notifications');
+            fetchNotifications();
+          }}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all relative ${
+            activeTab === 'notifications'
+              ? 'bg-bosch-blue text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          <span>BOQ Notifications & Internal Review</span>
+          {pendingCount > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 bg-amber-500 text-white font-black text-[10px] rounded-full animate-pulse">
+              {pendingCount}
+            </span>
+          )}
         </button>
       </div>
 
-      {/* Notifications */}
+      {/* Global Notifications */}
       {errorMsg && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="p-4 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/70 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-semibold flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -278,168 +397,401 @@ export default function AdminManagement() {
         </motion.div>
       )}
 
-      {/* Search & Stats Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search users by name, email, or role..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30 shadow-sm"
-          />
-        </div>
+      {/* TAB 1: User Administration */}
+      {activeTab === 'users' && (
+        <div className="space-y-4">
+          {/* Search & Stats Bar */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search users by name, email, or role..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30 shadow-sm"
+              />
+            </div>
 
-        <div className="flex items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
-          <span>Total Accounts: <strong className="text-slate-900 dark:text-white">{users.length}</strong></span>
-          <span>•</span>
-          <span>Active: <strong className="text-emerald-600 dark:text-emerald-400">{users.filter(u => u.is_active === 1).length}</strong></span>
-          <span>•</span>
-          <span>Deactivated: <strong className="text-rose-500">{users.filter(u => u.is_active === 0).length}</strong></span>
-        </div>
-      </div>
+            <div className="flex items-center gap-3 text-xs font-bold text-slate-500 dark:text-slate-400">
+              <span>Total Accounts: <strong className="text-slate-900 dark:text-white">{users.length}</strong></span>
+              <span>•</span>
+              <span>Active: <strong className="text-emerald-600 dark:text-emerald-400">{users.filter(u => u.is_active === 1).length}</strong></span>
+              <span>•</span>
+              <span>Deactivated: <strong className="text-rose-500">{users.filter(u => u.is_active === 0).length}</strong></span>
+            </div>
+          </div>
 
-      {/* User Directory Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-sky-200/70 dark:border-slate-800 shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center p-12">
-            <div className="w-8 h-8 border-4 border-t-bosch-blue border-slate-200 rounded-full animate-spin"></div>
-            <span className="text-xs font-semibold text-slate-400 mt-3">Loading user directory...</span>
-          </div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="text-center p-12 text-slate-400 font-semibold text-xs">
-            No matching user accounts found.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 uppercase font-black tracking-wider text-slate-400 dark:text-slate-500 text-[10px]">
-                <tr>
-                  <th className="py-3.5 px-6">User Account</th>
-                  <th className="py-3.5 px-4">Role</th>
-                  <th className="py-3.5 px-4">Assigned Permissions</th>
-                  <th className="py-3.5 px-4 text-center">Status</th>
-                  <th className="py-3.5 px-6 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
-                {filteredUsers.map((user) => (
-                  <tr key={user.id} className="hover:bg-sky-50/40 dark:hover:bg-slate-800/40 transition-colors">
-                    <td className="py-4 px-6">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-bosch-blue to-bosch-lightBlue flex items-center justify-center text-white font-bold text-xs shadow-sm">
-                          {(user.username || 'U').charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                            <span>{user.username}</span>
-                            {user.is_superuser === 1 && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold uppercase">Root</span>
-                            )}
+          {/* User Directory Table */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-sky-200/70 dark:border-slate-800 shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center p-12">
+                <div className="w-8 h-8 border-4 border-t-bosch-blue border-slate-200 rounded-full animate-spin"></div>
+                <span className="text-xs font-semibold text-slate-400 mt-3">Loading user directory...</span>
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="text-center p-12 text-slate-400 font-semibold text-xs">
+                No matching user accounts found.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 uppercase font-black tracking-wider text-slate-400 dark:text-slate-500 text-[10px]">
+                    <tr>
+                      <th className="py-3.5 px-6">User Account</th>
+                      <th className="py-3.5 px-4">Role</th>
+                      <th className="py-3.5 px-4">Assigned Permissions</th>
+                      <th className="py-3.5 px-4 text-center">Status</th>
+                      <th className="py-3.5 px-6 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                    {filteredUsers.map((user) => (
+                      <tr key={user.id} className="hover:bg-sky-50/40 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-bosch-blue to-bosch-lightBlue flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                              {(user.username || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                <span>{user.username}</span>
+                                {user.is_superuser === 1 && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold uppercase">Root</span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-normal">{user.email}</div>
+                            </div>
                           </div>
-                          <div className="text-[11px] text-slate-400 font-normal">{user.email}</div>
-                        </div>
-                      </div>
-                    </td>
+                        </td>
 
-                    <td className="py-4 px-4">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${getRoleBadgeStyle(user.role)}`}>
-                        {getRoleLabel(user.role)}
-                      </span>
-                    </td>
-
-                    <td className="py-4 px-4 max-w-xs">
-                      <div className="flex flex-wrap gap-1">
-                        {user.permissions && user.permissions.includes('*') ? (
-                          <span className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
-                            * (All System Rights)
+                        <td className="py-4 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${getRoleBadgeStyle(user.role)}`}>
+                            {getRoleLabel(user.role)}
                           </span>
-                        ) : Array.isArray(user.permissions) && user.permissions.length > 0 ? (
-                          user.permissions.slice(0, 3).map((p, idx) => (
-                            <span key={idx} className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-medium border border-slate-200 dark:border-slate-700">
-                              {p}
-                            </span>
-                          )).concat(user.permissions.length > 3 ? [<span key="more" className="text-[10px] text-slate-400 font-bold self-center">+{user.permissions.length - 3} more</span>] : [])
-                        ) : (
-                          <span className="text-slate-400 text-[10px]">No specific rights</span>
-                        )}
-                      </div>
-                    </td>
+                        </td>
 
-                    <td className="py-4 px-4 text-center">
-                      <button
-                        onClick={() => handleToggleActiveStatus(user)}
-                        title={`Click to ${user.is_active === 1 ? 'deactivate' : 'activate'} user`}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border transition-all ${
-                          user.is_active === 1
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 hover:bg-emerald-100'
-                            : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800 hover:bg-rose-100'
-                        }`}
-                      >
-                        {user.is_active === 1 ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                        <span>{user.is_active === 1 ? 'Active' : 'Inactive'}</span>
-                      </button>
-                    </td>
+                        <td className="py-4 px-4 max-w-xs">
+                          <div className="flex flex-wrap gap-1">
+                            {Array.isArray(user.permissions) && user.permissions.map(p => (
+                              <span key={p} className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-medium border border-slate-200 dark:border-slate-700">
+                                {p}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
 
-                    <td className="py-4 px-6 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleOpenEditModal(user)}
-                          className="p-2 text-slate-600 dark:text-slate-300 hover:text-bosch-blue dark:hover:text-bosch-accent hover:bg-sky-100/70 dark:hover:bg-slate-800 rounded-xl transition-all border border-slate-200 dark:border-slate-800"
-                          title="Edit User Role & Permissions"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setUserToDelete(user)}
-                          className="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-xl transition-all border border-slate-200 dark:border-slate-800"
-                          title="Delete User Account"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        <td className="py-4 px-4 text-center">
+                          <button
+                            onClick={() => handleToggleActiveStatus(user)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border transition-all cursor-pointer ${
+                              user.is_active === 1 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800' 
+                                : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${user.is_active === 1 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                            <span>{user.is_active === 1 ? 'Active' : 'Deactivated'}</span>
+                          </button>
+                        </td>
+
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleOpenEditModal(user)}
+                              className="p-1.5 text-slate-400 hover:text-bosch-blue hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                              title="Edit User Role & Permissions"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setUserToDelete(user)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 rounded-lg transition-colors"
+                              title="Delete User Account"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* User Form Modal (Create / Edit) */}
+      {/* TAB 2: BOQ Notifications & Internal Review Panel */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Bell className="w-5 h-5 text-bosch-blue dark:text-bosch-accent" />
+              Super Admin BOQ Save Notifications & Internal Review Panel
+            </h3>
+            <button
+              onClick={fetchNotifications}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingNotifications ? 'animate-spin' : ''}`} />
+              <span>Refresh Panel</span>
+            </button>
+          </div>
+
+          {/* BOQ Review Queue Table */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-sky-200/70 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-950/40">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-bosch-blue" />
+                Submitted BOQ Solutions for Management Review
+              </span>
+              <span className="text-xs font-bold bg-blue-50 dark:bg-blue-950 text-bosch-blue dark:text-bosch-accent px-2.5 py-0.5 rounded-lg border border-blue-200 dark:border-blue-800">
+                {boqs.length} Total Quotes ({pendingCount} Pending Review)
+              </span>
+            </div>
+
+            {loadingNotifications ? (
+              <div className="flex flex-col items-center justify-center p-12">
+                <div className="w-8 h-8 border-4 border-t-bosch-blue border-slate-200 rounded-full animate-spin" />
+                <span className="text-xs font-semibold text-slate-400 mt-3">Loading review queue...</span>
+              </div>
+            ) : boqs.length === 0 ? (
+              <div className="text-center p-12 text-slate-400 font-semibold text-xs">
+                No BOQ quotes available for review.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 uppercase font-black tracking-wider text-slate-400 dark:text-slate-500 text-[10px]">
+                    <tr>
+                      <th className="py-3.5 px-5">Project Details</th>
+                      <th className="py-3.5 px-4">Solution Title</th>
+                      <th className="py-3.5 px-4">Quotation #</th>
+                      <th className="py-3.5 px-4">Prepared By</th>
+                      <th className="py-3.5 px-4 text-right">Sales Value</th>
+                      <th className="py-3.5 px-4 text-center">Internal Review Status</th>
+                      <th className="py-3.5 px-5">Review Remarks</th>
+                      <th className="py-3.5 px-4 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                    {boqs.map((boq) => (
+                      <tr key={boq.id} className="hover:bg-sky-50/40 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-4 px-5">
+                          <div className="font-bold text-slate-900 dark:text-slate-100">{boq.projectName}</div>
+                          <div className="text-[11px] text-slate-400 font-normal">{boq.projectLocation || 'N/A'}</div>
+                        </td>
+
+                        <td className="py-4 px-4 font-semibold text-slate-800 dark:text-slate-200">
+                          {boq.solutionTitle || 'Custom Solution'}
+                        </td>
+
+                        <td className="py-4 px-4 font-bold text-slate-900 dark:text-slate-100">
+                          {boq.quotationNumber || 'N/A'}
+                        </td>
+
+                        <td className="py-4 px-4 text-slate-700 dark:text-slate-300">
+                          {boq.preparedBy}
+                        </td>
+
+                        <td className="py-4 px-4 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                          ₹{boq.salesTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </td>
+
+                        <td className="py-4 px-4 text-center">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold border ${getReviewBadgeStyle(boq.reviewStatus)}`}>
+                            <span>{boq.reviewStatus}</span>
+                          </span>
+                        </td>
+
+                        <td className="py-4 px-5 max-w-xs">
+                          <div className="text-slate-600 dark:text-slate-400 truncate text-[11px]">
+                            {boq.reviewRemarks || <span className="italic text-slate-400">No remarks yet</span>}
+                          </div>
+                        </td>
+
+                        <td className="py-4 px-4 text-center">
+                          <button
+                            onClick={() => handleOpenReviewModal(boq)}
+                            className="px-3 py-1.5 bg-bosch-blue hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold shadow-xs transition-colors"
+                          >
+                            Review
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Email Notification Audit Logs Table */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-sky-200/70 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-950/40">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <Send className="w-4 h-4 text-bosch-blue" />
+                Nodemailer Email Notification Audit Logs
+              </span>
+              <span className="text-xs text-slate-400 font-medium">
+                {notifications.length} Dispatch Logs
+              </span>
+            </div>
+
+            {notifications.length === 0 ? (
+              <div className="text-center p-8 text-slate-400 font-semibold text-xs">
+                No notification audit logs recorded yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 uppercase font-black tracking-wider text-slate-400 dark:text-slate-500 text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Event Type</th>
+                      <th className="py-3 px-4">BOQ ID</th>
+                      <th className="py-3 px-4">Super Admin Recipient</th>
+                      <th className="py-3 px-4">Event ID</th>
+                      <th className="py-3 px-4 text-center">Dispatch Status</th>
+                      <th className="py-3 px-4">Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium text-slate-700 dark:text-slate-300">
+                    {notifications.map((n) => (
+                      <tr key={n.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-bold text-slate-900 dark:text-slate-100">
+                          {n.notificationType}
+                        </td>
+                        <td className="py-3 px-4 font-mono">#{n.boqId}</td>
+                        <td className="py-3 px-4">{n.recipient}</td>
+                        <td className="py-3 px-4 font-mono text-[10px] text-slate-400 max-w-[140px] truncate">
+                          {n.eventId || 'N/A'}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                            n.status === 'SENT' 
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                              : 'bg-rose-100 text-rose-800 border border-rose-200'
+                          }`}>
+                            {n.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-[11px] text-slate-400">
+                          {new Date(n.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* BOQ Review Modal */}
+      {reviewModalBoq && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">Super Admin BOQ Review</h4>
+                <p className="text-xs text-slate-400 mt-0.5">Project: {reviewModalBoq.projectName} (#{reviewModalBoq.id})</p>
+              </div>
+              <button onClick={() => setReviewModalBoq(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitReview} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Internal Review Status:
+                </label>
+                <select
+                  value={reviewForm.review_status}
+                  onChange={(e) => setReviewForm(prev => ({ ...prev, review_status: e.target.value }))}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
+                >
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="PENDING_REVIEW">PENDING_REVIEW</option>
+                  <option value="IN_REVIEW">IN_REVIEW</option>
+                  <option value="APPROVED">APPROVED</option>
+                  <option value="REJECTED">REJECTED</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Internal Review Remarks & Feedback:
+                </label>
+                <textarea
+                  rows={4}
+                  value={reviewForm.review_remarks}
+                  onChange={(e) => setReviewForm(prev => ({ ...prev, review_remarks: e.target.value }))}
+                  placeholder="Record internal technical or commercial review remarks..."
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-100 font-medium focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setReviewModalBoq(null)}
+                  className="px-4 py-2 font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingReview}
+                  className="px-4 py-2 bg-bosch-blue hover:bg-blue-700 text-white font-bold rounded-xl shadow-md flex items-center gap-2 disabled:opacity-50"
+                >
+                  {submittingReview ? (
+                    <div className="w-3.5 h-3.5 border-2 border-t-transparent border-white rounded-full animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" />
+                  )}
+                  <span>Save Review Status</span>
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* User Provisioning Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-slate-900 border border-sky-200/80 dark:border-slate-800 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 max-h-[90vh] overflow-y-auto"
             >
-              {/* Modal Header */}
-              <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-sky-50 via-blue-50/50 to-sky-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-bosch-blue text-white flex items-center justify-center font-bold text-xs">
-                    {modalMode === 'create' ? <UserPlus className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
-                  </div>
-                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
-                    {modalMode === 'create' ? 'Provision New Account' : `Configure Account: ${selectedUser?.username}`}
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    {modalMode === 'create' ? 'Provision New User Account' : `Edit User: ${selectedUser?.username}`}
                   </h3>
+                  <p className="text-xs text-slate-400 font-medium mt-0.5">
+                    {modalMode === 'create' ? 'Create new user and assign RBAC role permissions.' : 'Modify role and security permissions.'}
+                  </p>
                 </div>
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
-                >
+                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Modal Body Form */}
-              <form onSubmit={handleSubmitModal} className="p-6 space-y-5 overflow-y-auto flex-1 text-xs">
-                {/* Username & Email */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <form onSubmit={handleSubmitModal} className="space-y-4 text-xs font-medium">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Username *</label>
                     <input
@@ -447,8 +799,8 @@ export default function AdminManagement() {
                       required
                       value={formData.username}
                       onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
-                      placeholder="e.g. jdoe"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30"
+                      placeholder="e.g. jdoe_presales"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
                     />
                   </div>
 
@@ -460,75 +812,55 @@ export default function AdminManagement() {
                       value={formData.email}
                       onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                       placeholder="e.g. john.doe@bosch.com"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30"
+                      className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
                     />
                   </div>
                 </div>
 
-                {/* Password (Required for create, optional for edit) */}
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {modalMode === 'create' ? 'Account Password *' : 'Change Password (leave blank to keep current)'}
+                    {modalMode === 'create' ? 'Password *' : 'New Password (Leave blank to keep existing)'}
                   </label>
-                  <div className="relative">
-                    <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="password"
-                      required={modalMode === 'create'}
-                      value={formData.password}
-                      onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-                      placeholder={modalMode === 'create' ? 'Enter initial password...' : 'Enter new password to reset...'}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30"
-                    />
-                  </div>
+                  <input
+                    type="password"
+                    required={modalMode === 'create'}
+                    value={formData.password}
+                    onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+                    placeholder="••••••••••••"
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
+                  />
                 </div>
 
-                {/* Role Selection Dropdown */}
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Assigned Predefined Role *</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Assign User Role *</label>
                   <select
                     value={formData.role}
                     onChange={handleRoleChange}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-bosch-blue/30"
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-bosch-blue/20"
                   >
-                    <option value="super_admin">Super Admin (Full Administrative Override)</option>
-                    <option value="price_admin">Price Admin (Ratecard Buying & List Price Management)</option>
-                    <option value="presales_admin">Pre-Sales Admin (Full Pre-sales & BOQ Workflow)</option>
-                    <option value="viewer">Viewer (Read-Only Access Across All Modules)</option>
+                    <option value="presales_admin">Pre-Sales Admin</option>
+                    <option value="price_admin">Price Admin</option>
+                    <option value="super_admin">Super Admin (Full Root Access)</option>
+                    <option value="viewer">Viewer (Read Only)</option>
                   </select>
                 </div>
 
-                {/* Fine-grained Permission Tag Picker */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block font-bold text-slate-700 dark:text-slate-300">
-                      Permission Tags Selection
-                    </label>
-                    <span className="text-[10px] text-slate-400 font-semibold">
-                      Role selection defaults tags automatically
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-2">Fine-Grained Permissions:</label>
+                  <div className="space-y-2 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700 max-h-48 overflow-y-auto">
                     {permissionCatalog.map((perm) => {
-                      const isChecked = formData.permissions.includes(perm.key) || formData.permissions.includes('*');
+                      const isChecked = (formData.permissions || []).includes(perm.key);
                       return (
-                        <label
-                          key={perm.key}
-                          className={`flex items-start gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-                            isChecked ? 'bg-sky-100/70 dark:bg-slate-800/80 border border-sky-200 dark:border-slate-700' : 'hover:bg-slate-100 dark:hover:bg-slate-900'
-                          }`}
-                        >
+                        <label key={perm.key} className="flex items-start gap-2.5 p-1.5 hover:bg-white dark:hover:bg-slate-800 rounded-lg cursor-pointer transition-colors">
                           <input
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => handleTogglePermission(perm.key)}
-                            disabled={formData.role === 'super_admin'}
-                            className="mt-0.5 accent-bosch-blue w-4 h-4 rounded"
+                            className="mt-0.5 rounded text-bosch-blue focus:ring-bosch-blue/20"
                           />
                           <div>
-                            <div className="font-bold text-slate-800 dark:text-slate-200">{perm.label} <code className="text-[10px] text-slate-400 font-mono">({perm.key})</code></div>
-                            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">{perm.description}</div>
+                            <div className="font-bold text-slate-900 dark:text-slate-100">{perm.label}</div>
+                            <div className="text-[11px] text-slate-400 font-normal">{perm.description}</div>
                           </div>
                         </label>
                       );
@@ -536,22 +868,20 @@ export default function AdminManagement() {
                   </div>
                 </div>
 
-                {/* Footer Buttons */}
-                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
+                <div className="flex items-center justify-end gap-3 pt-3">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2.5 border border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    className="px-4 py-2 font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-5 py-2.5 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue text-white font-bold rounded-xl shadow-md shadow-bosch-blue/20 hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50"
+                    className="px-4 py-2 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all disabled:opacity-50"
                   >
-                    {submitting && <div className="w-3.5 h-3.5 border-2 border-t-transparent border-white rounded-full animate-spin"></div>}
-                    <span>{modalMode === 'create' ? 'Create User Account' : 'Save Changes'}</span>
+                    {submitting ? 'Saving...' : modalMode === 'create' ? 'Create User' : 'Save Changes'}
                   </button>
                 </div>
               </form>
@@ -560,47 +890,50 @@ export default function AdminManagement() {
         )}
       </AnimatePresence>
 
-      {/* Delete User Confirmation Modal */}
+      {/* Delete User Modal */}
       <AnimatePresence>
         {userToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-slate-900 border border-rose-200/80 dark:border-rose-900/70 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4"
             >
-              <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
-                <div className="w-10 h-10 rounded-2xl bg-rose-100 dark:bg-rose-950/70 flex items-center justify-center">
+              <div className="flex items-start justify-between">
+                <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
                   <Trash2 className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="font-extrabold text-slate-900 dark:text-white text-base">Delete User Account</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">This action cannot be undone.</p>
-                </div>
+                <button onClick={() => setUserToDelete(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-semibold">
-                Are you sure you want to permanently delete the user account <strong className="text-slate-900 dark:text-white">{userToDelete.username}</strong> ({userToDelete.email})?
-              </p>
+              <div>
+                <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">Delete User Account?</h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Are you sure you want to delete user account <span className="font-bold text-slate-800 dark:text-slate-200">"{userToDelete.username}"</span>? This action cannot be undone.
+                </p>
+              </div>
 
-              <div className="pt-2 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-3 pt-2">
                 <button
-                  type="button"
-                  disabled={isDeletingUser}
                   onClick={() => setUserToDelete(null)}
-                  className="px-4 py-2 border border-slate-200 dark:border-slate-700 font-bold text-xs text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
                 >
                   Cancel
                 </button>
                 <button
-                  type="button"
-                  disabled={isDeletingUser}
                   onClick={handleDeleteUser}
-                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-md shadow-rose-600/20 transition-all flex items-center gap-2 disabled:opacity-50"
+                  disabled={isDeletingUser}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
                 >
-                  {isDeletingUser && <div className="w-3.5 h-3.5 border-2 border-t-transparent border-white rounded-full animate-spin"></div>}
-                  <span>Delete User</span>
+                  {isDeletingUser ? (
+                    <div className="w-3.5 h-3.5 border-2 border-t-transparent border-white rounded-full animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>Confirm Delete</span>
                 </button>
               </div>
             </motion.div>

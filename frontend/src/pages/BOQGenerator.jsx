@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Save, 
+  Send,
   FileDown, 
   FileSpreadsheet,
   Plus, 
@@ -78,6 +79,8 @@ export default function BOQGenerator() {
   
   // Saving BOQ UX States
   const [isSavingBOQ, setIsSavingBOQ] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [currentReviewStatus, setCurrentReviewStatus] = useState('DRAFT');
   const [showSaveSuccessModal, setShowSaveSuccessModal] = useState(false);
   const [savedQuoteSummary, setSavedQuoteSummary] = useState(null);
   
@@ -402,14 +405,24 @@ export default function BOQGenerator() {
     setGlobalMargin(overallMargin);
   }, [overallMargin]);
 
-  // Save BOQ to DB
-  const handleSaveBOQ = async () => {
+  // Save BOQ to DB (Supports silent Save Draft vs explicit Submit for Review with email trigger)
+  const handleSaveBOQ = async ({ submitForReview = false } = {}) => {
     if (!projectName) {
       showNotification('Project Name is required before saving.', 'error');
       return;
     }
 
-    setIsSavingBOQ(true);
+    if (submitForReview) {
+      setIsSubmittingReview(true);
+    } else {
+      setIsSavingBOQ(true);
+    }
+
+    const eventId = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    const targetReviewStatus = submitForReview ? 'PENDING_REVIEW' : (currentReviewStatus || 'DRAFT');
 
     const payload = {
       id: currentBoqId || undefined,
@@ -438,15 +451,21 @@ export default function BOQGenerator() {
         amcTotal,
         grandTotalBuy,
         grandTotalSales,
-        totalProfit
-      }
+        totalProfit,
+        reviewStatus: targetReviewStatus
+      },
+      send_notification: submitForReview,
+      submit_for_review: submitForReview,
+      event_id: eventId
     };
 
     try {
       const response = await axios.post('/boq/save', payload);
       if (response.data.status === 'success') {
         const savedId = response.data.data.id;
+        const returnedReviewStatus = response.data.data.reviewStatus || targetReviewStatus;
         setCurrentBoqId(savedId);
+        setCurrentReviewStatus(returnedReviewStatus);
         fetchBoqList();
 
         setSavedQuoteSummary({
@@ -455,16 +474,29 @@ export default function BOQGenerator() {
           quotationNumber: quotationNumber || 'Generated Quotation',
           projectLocation: projectLocation || 'N/A',
           grandTotalSales,
-          itemCount: (hardware?.length || 0) + (software?.length || 0) + (services?.length || 0)
+          itemCount: (hardware?.length || 0) + (software?.length || 0) + (services?.length || 0),
+          isSubmitted: submitForReview,
+          reviewStatus: returnedReviewStatus
         });
 
         setShowSaveSuccessModal(true);
-        showNotification('BOQ Quote saved successfully to database.');
+        if (submitForReview) {
+          showNotification('BOQ Quote submitted for review & email notification sent to Super Admin.');
+        } else {
+          showNotification('BOQ Quote draft saved successfully to database.');
+        }
       }
     } catch (err) {
-      showNotification('Error saving BOQ quotation.', 'error');
+      console.error('Error saving BOQ quotation:', err);
+      if (err.response?.status === 401) {
+        showNotification('Authentication session expired or missing token. Please log in again to save.', 'error');
+      } else {
+        const errorMsg = err.response?.data?.message || 'Error saving BOQ quotation.';
+        showNotification(errorMsg, 'error');
+      }
     } finally {
       setIsSavingBOQ(false);
+      setIsSubmittingReview(false);
     }
   };
 
@@ -473,6 +505,7 @@ export default function BOQGenerator() {
     if (!id) {
       // Clear fields
       setCurrentBoqId('');
+      setCurrentReviewStatus('DRAFT');
       setProjectName('');
       setProjectLocation('');
       setQuotationNumber('');
@@ -489,6 +522,7 @@ export default function BOQGenerator() {
         const boq = response.data.data.boq;
         
         setCurrentBoqId(boq.id);
+        setCurrentReviewStatus(boq.reviewStatus || 'DRAFT');
         setProjectName(boq.projectName || '');
         setProjectLocation(boq.projectLocation || '');
         setQuotationNumber(boq.quotationNumber || '');
@@ -1512,7 +1546,24 @@ export default function BOQGenerator() {
         {/* Grand Total & Action Box */}
         <div className="p-6 bg-slate-900 rounded-2xl border border-slate-800 text-white flex flex-col justify-between shadow-xl space-y-6">
           <div>
-            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Quotation Grand Total</h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Quotation Grand Total</h4>
+              {currentReviewStatus && (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                  currentReviewStatus === 'APPROVED' 
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                    : currentReviewStatus === 'REJECTED' 
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
+                    : currentReviewStatus === 'IN_REVIEW' 
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
+                    : currentReviewStatus === 'PENDING_REVIEW' 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'bg-slate-700/60 text-slate-300 border border-slate-600/40'
+                }`}>
+                  {currentReviewStatus === 'DRAFT' ? 'Draft' : currentReviewStatus}
+                </span>
+              )}
+            </div>
             <h3 className="text-3xl font-extrabold text-bosch-accent font-mono mt-2">
               ₹{grandTotalSales.toFixed(2)}
             </h3>
@@ -1529,34 +1580,57 @@ export default function BOQGenerator() {
           </div>
 
           <div className="space-y-2.5">
-            <button 
-              onClick={handleSaveBOQ}
-              disabled={isSavingBOQ || !canWriteBOQ}
-              title={!canWriteBOQ ? "Quote saving requires BOQ Write permissions" : "Save Quote"}
-              className="w-full py-2.5 bg-bosch-blue hover:bg-bosch-lightBlue disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-md active:scale-95"
-            >
-              {isSavingBOQ ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Saving Quotation...</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  <span>{canWriteBOQ ? 'Save Quote' : 'Save Quote (Read Only)'}</span>
-                </>
-              )}
-            </button>
+            {/* Primary Workflow Buttons: Save Draft (silent) and Submit for Review (email trigger) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button 
+                onClick={() => handleSaveBOQ({ submitForReview: false })}
+                disabled={isSavingBOQ || isSubmittingReview || !canWriteBOQ}
+                title={!canWriteBOQ ? "Quote saving requires BOQ Write permissions" : "Save quotation draft to database without sending email notifications"}
+                className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/60 disabled:cursor-not-allowed text-slate-200 border border-slate-700 hover:border-slate-600 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+              >
+                {isSavingBOQ ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5 text-slate-300" />
+                    <span>{canWriteBOQ ? 'Save Draft' : 'Save (Read Only)'}</span>
+                  </>
+                )}
+              </button>
+
+              <button 
+                onClick={() => handleSaveBOQ({ submitForReview: true })}
+                disabled={isSavingBOQ || isSubmittingReview || !canWriteBOQ}
+                title={!canWriteBOQ ? "Quote submission requires BOQ Write permissions" : "Save quotation and send email notification to Super Admin for approval"}
+                className="py-2.5 px-3 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue hover:from-blue-700 hover:to-sky-600 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-bosch-blue/20 active:scale-95"
+              >
+                {isSubmittingReview ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                    <span>Submitting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Submit for Review</span>
+                  </>
+                )}
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <button 
                 onClick={handleDownloadPDF}
-                className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-transparent font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
+                className="py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-transparent font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
               >
                 <FileDown className="w-3.5 h-3.5 text-rose-500" /> Export PDF
               </button>
               <button 
                 onClick={handleDownloadCSV}
-                className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-transparent font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
+                className="py-2.5 bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-transparent font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" /> Export Excel
               </button>
@@ -1676,22 +1750,28 @@ export default function BOQGenerator() {
         </div>
       )}
 
-      {/* Loading Overlay when Saving BOQ */}
-      {isSavingBOQ && (
+      {/* Loading Overlay when Saving BOQ or Submitting Review */}
+      {(isSavingBOQ || isSubmittingReview) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-3xl p-6 shadow-2xl flex flex-col items-center gap-3 border border-slate-100 max-w-xs text-center">
             <div className="w-12 h-12 rounded-2xl bg-bosch-blue/10 text-bosch-blue flex items-center justify-center">
               <Loader2 className="w-6 h-6 animate-spin text-bosch-blue" />
             </div>
             <div>
-              <h4 className="font-bold text-slate-800 text-sm">Saving BOQ Quotation</h4>
-              <p className="text-xs text-slate-500 mt-1">Committing quote data to pre-sales CRM database...</p>
+              <h4 className="font-bold text-slate-800 text-sm">
+                {isSubmittingReview ? 'Submitting BOQ for Review' : 'Saving BOQ Draft'}
+              </h4>
+              <p className="text-xs text-slate-500 mt-1">
+                {isSubmittingReview 
+                  ? 'Saving quotation and notifying Super Admin via email...' 
+                  : 'Committing quote draft to pre-sales CRM database...'}
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modern Save Success Modal */}
+      {/* Modern Save / Submit Success Modal */}
       {showSaveSuccessModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md px-4">
           <motion.div 
@@ -1708,14 +1788,32 @@ export default function BOQGenerator() {
 
             {/* Success Icon Badge */}
             <div className="flex flex-col items-center text-center mb-5">
-              <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center border-4 border-emerald-100 shadow-lg shadow-emerald-500/10 mb-3">
-                <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center border-4 shadow-lg mb-3 ${
+                savedQuoteSummary?.isSubmitted
+                  ? 'bg-blue-50 text-bosch-blue border-blue-100 shadow-blue-500/10'
+                  : 'bg-emerald-50 text-emerald-500 border-emerald-100 shadow-emerald-500/10'
+              }`}>
+                {savedQuoteSummary?.isSubmitted ? (
+                  <Send className="w-8 h-8 text-bosch-blue" />
+                ) : (
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                )}
               </div>
-              <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full uppercase tracking-wider mb-1">
-                Database Confirmed
+              <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-1 ${
+                savedQuoteSummary?.isSubmitted
+                  ? 'bg-blue-500/10 text-bosch-blue'
+                  : 'bg-emerald-500/10 text-emerald-600'
+              }`}>
+                {savedQuoteSummary?.isSubmitted ? 'Submitted for Super Admin Review' : 'Draft Saved (Database Confirmed)'}
               </span>
-              <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">Quotation Saved!</h3>
-              <p className="text-xs text-slate-500 mt-1">Your pre-sales BOQ quotation has been stored safely.</p>
+              <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                {savedQuoteSummary?.isSubmitted ? 'Quotation Submitted!' : 'Draft Saved!'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                {savedQuoteSummary?.isSubmitted 
+                  ? 'Quote saved and review email notification dispatched to Super Admin.' 
+                  : 'Your pre-sales quote draft has been stored safely without email notifications.'}
+              </p>
             </div>
 
             {/* Quote Summary Box */}
@@ -1727,6 +1825,10 @@ export default function BOQGenerator() {
               <div className="flex justify-between items-center">
                 <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Quotation Ref</span>
                 <span className="font-semibold text-slate-700 font-mono">{savedQuoteSummary?.quotationNumber || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Review Status</span>
+                <span className="font-bold text-slate-700 uppercase">{savedQuoteSummary?.reviewStatus || 'DRAFT'}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Line Items Count</span>
@@ -1742,6 +1844,19 @@ export default function BOQGenerator() {
 
             {/* Quick Action Buttons */}
             <div className="space-y-2">
+              {!savedQuoteSummary?.isSubmitted && canWriteBOQ && (
+                <button
+                  onClick={() => {
+                    setShowSaveSuccessModal(false);
+                    handleSaveBOQ({ submitForReview: true });
+                  }}
+                  className="w-full py-2.5 bg-gradient-to-r from-bosch-blue to-bosch-lightBlue hover:from-blue-700 hover:to-sky-600 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 transition-all active:scale-95 mb-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>Submit for Review Now & Notify Super Admin</span>
+                </button>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => {
